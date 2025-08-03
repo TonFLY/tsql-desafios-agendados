@@ -2,12 +2,20 @@ name: Enviar desafio T-SQL diário
 
 on:
   schedule:
-    - cron: '0 8 * * *' # Todos os dias às 08h BRT
+    - cron: '0 8 * * *' # 08h UTC = 05h BRT
   workflow_dispatch:
 
 jobs:
   desafio-diario:
     runs-on: ubuntu-latest
+
+    env:
+      EMAIL: ${{ secrets.EMAIL }}
+      APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+      REMETENTE: ${{ secrets.REMETENTE }}
+      POE_API_KEY: ${{ secrets.POE_API_KEY }}
+      BOT_NAME: ${{ secrets.BOT_NAME }}
+
     steps:
       - name: Checkout do código
         uses: actions/checkout@v3
