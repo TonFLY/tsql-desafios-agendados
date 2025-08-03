@@ -17,11 +17,12 @@ jobs:
       BOT_NAME: ${{ secrets.BOT_NAME }}
 
     steps:
-      - name: Checkout do código
-        uses: actions/checkout@v3
       - name: Debug - listar arquivos na raiz
         run: ls -la
         
+      - name: Checkout do código
+        uses: actions/checkout@v3
+      
       - name: Instalar Python
         uses: actions/setup-python@v4
         with:
