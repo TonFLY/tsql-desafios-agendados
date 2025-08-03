@@ -1,0 +1,24 @@
+name: Enviar desafio T-SQL diário
+
+on:
+  schedule:
+    - cron: '0 8 * * *' # Todos os dias às 08h BRT
+  workflow_dispatch:
+
+jobs:
+  desafio-diario:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v3
+
+      - name: Instalar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Executar script Python
+        run: python enviar_desafio.py
