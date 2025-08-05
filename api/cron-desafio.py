@@ -1,45 +1,63 @@
-import fastapi_poe as fp
-import asyncio
-import time
+import json
 import os
+import asyncio
 from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import json
-from dotenv import load_dotenv
+from http.server import BaseHTTPRequestHandler
+import fastapi_poe as fp
 
-# Carregar variáveis do arquivo .env
-load_dotenv()
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            # Executar a geração e envio do desafio
+            result = asyncio.run(executar_desafio())
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            
+            response = {
+                "status": "success",
+                "message": "Desafio gerado e enviado com sucesso!",
+                "timestamp": datetime.now().isoformat(),
+                "result": result
+            }
+            
+            self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
+            
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            
+            error_response = {
+                "status": "error",
+                "message": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            self.wfile.write(json.dumps(error_response, ensure_ascii=False).encode('utf-8'))
 
-# Configurações (usando variáveis de ambiente)
+# Configurações usando variáveis de ambiente da Vercel
 EMAIL = os.getenv("EMAIL")
 APP_PASSWORD = os.getenv("APP_PASSWORD")
 REMETENTE = os.getenv("REMETENTE")
 API_KEY = os.getenv("POE_API_KEY")
-BOT_NAME = os.getenv("BOT_NAME", "botsupremooo")  # valor padrão se não definir
+BOT_NAME = os.getenv("BOT_NAME", "botsupremooo")
 
-HISTORICO_PATH = "historico.json"
+# Armazenamento simples em memória (para Vercel)
+historico_memoria = []
 
-# Utilitários de histórico
-def carregar_historico():
-    try:
-        with open(HISTORICO_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return []
-
-def salvar_historico(historico):
-    with open(HISTORICO_PATH, "w", encoding="utf-8") as f:
-        json.dump(historico, f, ensure_ascii=False, indent=2)
-
-# Geração de texto com IA (POE)
 async def gerar_texto_ia_async(prompt, historico=None):
+    global historico_memoria
+    
     if historico is None:
-        historico = []
-
+        historico = historico_memoria
+    
     historico.append({"role": "user", "content": prompt})
-
+    
     resposta = ""
     try:
         async for partial in fp.get_bot_response(
@@ -56,26 +74,18 @@ async def gerar_texto_ia_async(prompt, historico=None):
     except Exception as e:
         print("Erro na chamada da API:", e)
         return ""
-
+    
     historico.append({"role": "bot", "content": resposta})
-
-    if len(historico) > 10:
-        historico = historico[-10:]
-
-    salvar_historico(historico)
+    
+    # Manter apenas os últimos 6 elementos para não sobrecarregar
+    if len(historico) > 6:
+        historico = historico[-6:]
+    
+    historico_memoria = historico
     return resposta.strip()
 
-# Utilitários de arquivo
-def ler_desafio_anterior():
-    try:
-        with open("desafio_anterior.txt", "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "Nenhum."
-
-# Geração de prompts
-def gerar_prompt_desafio(desafio_anterior):
-    return f"""
+def gerar_prompt_desafio():
+    return """
 Você é um especialista sênior em T-SQL com foco em performance e arquitetura de banco de dados.
 
 Seu papel é criar **um desafio prático e avançado** que ajude o aluno a desenvolver as seguintes habilidades:
@@ -90,13 +100,11 @@ Seu papel é criar **um desafio prático e avançado** que ajude o aluno a desen
 4. Uso de `INNER JOIN`, `LEFT JOIN`, `EXISTS`, `NOT EXISTS`, e boas práticas em filtros e subconsultas.
 
 **Regras para o desafio:**
-- Baseie-se no desafio anterior, se houver.
 - Crie tabelas e dados de exemplo.
 - Explique o desafio de forma didática.
 - Dê dicas, possíveis erros e links úteis de estudo.
 - **Não entregue a solução!**
-
-Desafio anterior: {desafio_anterior}
+- Seja criativo e varie os tipos de desafio.
 """
 
 def gerar_prompt_resolucao(desafio_atual):
@@ -108,7 +116,6 @@ Agora, entregue a solução detalhada do seguinte desafio, explicando passo a pa
 Desafio: {desafio_atual}
 """
 
-# Envio de e-mail com HTML formatado
 def enviar_email(conteudo, assunto):
     msg = MIMEMultipart("alternative")
     msg["From"] = REMETENTE
@@ -124,7 +131,7 @@ def enviar_email(conteudo, assunto):
                 {conteudo.replace("<", "&lt;").replace(">", "&gt;")}
             </div>
             <p>Copie e cole no seu ambiente SQL para praticar.<br>
-            Enviado por seu tutor T-SQL automatizado.</p>
+            Enviado automaticamente via Vercel Cron Job 🚀</p>
         </body>
     </html>
     """
@@ -136,41 +143,34 @@ def enviar_email(conteudo, assunto):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(REMETENTE, APP_PASSWORD)
             server.sendmail(REMETENTE, EMAIL.split(","), msg.as_string())
-        print(f"📧 Email enviado: {assunto}")
+        return f"📧 Email enviado: {assunto}"
     except Exception as e:
-        print("Erro ao enviar email:", e)
+        raise Exception(f"Erro ao enviar email: {e}")
 
-# Geração e envio de desafio
-def salvar_e_enviar_desafio():
-    desafio_anterior = ler_desafio_anterior()
-    prompt_desafio = gerar_prompt_desafio(desafio_anterior)
-    historico = carregar_historico()
-
-    desafio_atual = asyncio.run(gerar_texto_ia_async(prompt_desafio, historico))
-
-    with open("desafio_tsql.txt", "a", encoding="utf-8") as f:
-        f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M')}\n{desafio_atual}\n{'='*50}\n")
-
-    with open("desafio_anterior.txt", "w", encoding="utf-8") as f:
-        f.write(desafio_atual)
-
-    enviar_email(desafio_atual, "📬 Seu Desafio T-SQL do Dia - Aprenda e Pratique!")
-
-    prompt_resolucao = gerar_prompt_resolucao(desafio_atual)
-    resolucao = asyncio.run(gerar_texto_ia_async(prompt_resolucao, carregar_historico()))
-
-    with open("resolucao_tsql.txt", "w", encoding="utf-8") as f:
-        f.write(resolucao)
-
-# Envio da resolução posteriormente
-def enviar_resolucao():
+async def executar_desafio():
     try:
-        with open("resolucao_tsql.txt", "r", encoding="utf-8") as f:
-            resolucao = f.read()
-        enviar_email(resolucao, "📩 Só abra se já tentou resolver o desafio!")
-    except FileNotFoundError:
-        print("Arquivo de resolução não encontrado.")
-
-# Execução direta
-salvar_e_enviar_desafio()
-enviar_resolucao()
+        # Gerar desafio
+        prompt_desafio = gerar_prompt_desafio()
+        desafio_atual = await gerar_texto_ia_async(prompt_desafio)
+        
+        if not desafio_atual:
+            return {"error": "Falha ao gerar desafio"}
+        
+        # Enviar desafio
+        resultado_desafio = enviar_email(desafio_atual, "📬 Seu Desafio T-SQL do Dia - Aprenda e Pratique!")
+        
+        # Gerar resolução
+        prompt_resolucao = gerar_prompt_resolucao(desafio_atual)
+        resolucao = await gerar_texto_ia_async(prompt_resolucao)
+        
+        # Enviar resolução
+        resultado_resolucao = enviar_email(resolucao, "📩 Resolução do Desafio T-SQL")
+        
+        return {
+            "desafio_enviado": resultado_desafio,
+            "resolucao_enviada": resultado_resolucao,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        raise Exception(f"Erro na execução: {str(e)}")

@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "api/cron-desafio.py": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron-desafio",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+2025-08-05 19:51
+Ótimo! Vamos criar um **desafio prático e avançado** para te ajudar a desenvolver as competências essenciais de um(a) analista sênior de banco de dados SQL Server. Este desafio simula um cenário real de uma empresa de e-commerce.
+
+---
+
+## **Cenário do Desafio**
+
+Você faz parte do time responsável pelo banco de dados de uma plataforma de e-commerce. O time de BI precisa de uma visão detalhada dos pedidos, clientes e produtos, e também de stored procedures para relatórios de vendas e auditoria de inconsistências.
+
+### **1. Estrutura de Dados de Exemplo**
+
+Crie as seguintes tabelas (com alguns campos principais):
+
+```sql
+CREATE TABLE Clientes (
+    ClienteId INT PRIMARY KEY,
+    Nome NVARCHAR(100),
+    Email NVARCHAR(100),
+    DataCadastro DATE
+);
+
+CREATE TABLE Produtos (
+    ProdutoId INT PRIMARY KEY,
+    Nome NVARCHAR(100),
+    Preco DECIMAL(10,2),
+    Ativo BIT
+);
+
+CREATE TABLE Pedidos (
+    PedidoId INT PRIMARY KEY,
+    ClienteId INT FOREIGN KEY REFERENCES Clientes(ClienteId),
+    DataPedido DATETIME,
+    Status NVARCHAR(20)
+);
+
+CREATE TABLE ItensPedido (
+    ItemPedidoId INT PRIMARY KEY,
+    PedidoId INT FOREIGN KEY REFERENCES Pedidos(PedidoId),
+    ProdutoId INT FOREIGN KEY REFERENCES Produtos(ProdutoId),
+    Quantidade INT,
+    PrecoUnitario DECIMAL(10,2)
+);
+```
+
+**Popule com pelo menos 5 registros em cada tabela para seus testes.**
+
+---
+
+## **Desafio Prático**
+
+### **Parte 1: Criação de uma View Performática**
+
+Crie uma `VIEW` chamada `vw_PedidosDetalhados` que traga:
+
+- Dados do pedido (ID, data, status);
+- Nome e email do cliente;
+- Nome do produto, quantidade, valor total do item (`Quantidade * PrecoUnitario`);
+- Valor total do pedido (soma dos itens);
+- Apenas pedidos dos últimos 90 dias com status ‘Finalizado’;
+- **Evite funções escalares** em colunas;
+- Use `WITH (NOLOCK)` nos joins – **mas só onde faz sentido**;
+- Use `CTE` se necessário para clareza e performance;
+- Atenção ao uso de `INNER JOIN` vs `LEFT JOIN` (pense em pedidos sem itens, produtos inativos etc.);
+- Filtre apenas produtos ativos.
+
+**Desafio extra:** Mostre na view se o cliente já tem mais de 3 pedidos (campo: ClienteFrequente BIT).
+
+---
+
+### **Parte 2: Stored Procedure Estruturada**
+
+Crie uma procedure chamada `sp_RelatorioVendasProduto` que deve:
+
+- Receber como parâmetro o `@ProdutoId` e um intervalo de datas (`@DataInicio`, `@DataFim`);
+- Retornar: total de vendas do produto, quantidade total vendida, número de clientes distintos que compraram;
+- Ter um parâmetro de saída `@ErroMensagem NVARCHAR(200)` para retornar mensagens de erro amigáveis;
+- Usar **TRY...CATCH** para tratamento de erros;
+- Utilizar comentários claros (bloco e linhas);
+- Seguir boas práticas de nomenclatura (prefixos, caixa, clareza);
+- Modularize a lógica, se possível (ex: subqueries nomeadas, CTEs, etc).
+
+---
+
+### **Parte 3: Interpretação de Plano de Execução**
+
+Após criar a view e a procedure:
+
+- **Analise o plano de execução** ao rodar a view e a procedure.
+- Identifique possíveis gargalos: uso de Table/Index Scan vs Index Seek, operadores de Hash, Nested Loops, etc.
+- Liste **2 armadilhas comuns** que afetam performance (por exemplo: funções escalares, joins mal feitos, falta de índices).
+- **Dica:** Use o comando `SET STATISTICS IO ON` e o GUI do SSMS para analisar.
+
+---
+
+### **Parte 4: Pratique Joins e Subconsultas**
+
+- Reescreva uma consulta para mostrar todos os clientes que **nunca fizeram pedidos** usando `NOT EXISTS`.
+- Outra consulta para listar produtos **que nunca foram vendidos** (usando `LEFT JOIN`).
+- Pratique filtros eficientes: use `EXISTS` para encontrar clientes que tenham mais de 1 pedido nos últimos 30 dias.
+
+---
+
+## **Dicas e Armadilhas Comuns**
+
+- **Evite funções escalares** no SELECT; prefira CTEs ou subconsultas.
+- **Joins mal planejados** podem causar explosão de linhas ou Table Scans.
+- **WITH (NOLOCK)**: cuidado, use apenas em relatórios não críticos (pode haver leituras "sujas").
+- **Índices**: Verifique se suas tabelas têm índices adequados nas colunas de junção e filtro.
+- **Plano de execução**: fique atento a *warnings* e operações de alto custo.
+
+---
+
+## **Links para Estudo**
+
+- [Documentação oficial T-SQL Views](https://learn.microsoft.com/pt-br/sql/t-sql/statements/create-view-transact-sql)
+- [Guia de Stored Procedures](https://learn.microsoft.com/pt-br/sql/t-sql/statements/create-procedure-transact-sql)
+- [Como ler o plano de execução](https://learn.microsoft.com/pt-br/sql/relational-databases/performance/display-an-actual-execution-plan)
+- [Diferença entre EXISTS, IN e JOIN](https://www.sqlshack.com/sql-server-exists-vs-in-vs-join-vs-subquery/)
+
+---
+
+## **Possíveis Erros**
+
+- Filtros no lugar errado (ex: depois do JOIN, causando retornos errados).
+- Falta de tratamento de erro na procedure.
+- Uso incorreto de `NOLOCK` (pode trazer dados inconsistentes).
+- Junção de tabelas desnecessárias.
+- Colunas calculadas no SELECT ao invés de CTE/subquery.
+
+---
+
+## **Desafio de Carreira**
+
+- Pense como um DBA: como deixaria esse ambiente preparado para crescimento?
+- Como versionaria esses scripts e objetos?
+- Que convenções de nomenclatura adotaria?
+- Que índices criaria para otimizar as queries principais?
+
+---
+
+**Mãos à obra! Se tiver dúvidas ou quiser compartilhar sua solução para revisão, envie seu código!**
+==================================================

@@ -1,0 +1,228 @@
+Excelente, vamos resolver o desafio **passo a passo**, trazendo o raciocínio de performance, boas práticas e explicações didáticas em cada parte.  
+Vou assumir que as tabelas já foram criadas e populadas conforme o enunciado.
+
+---
+
+## **Parte 1: View Performática – `vw_PedidosDetalhados`**
+
+### **Raciocínio Técnico**
+
+1. **Selecionar apenas pedidos dos últimos 90 dias e status ‘Finalizado’**: Filtro no início para reduzir volume de dados.
+2. **Evitar funções escalares**: Utilize CTEs e subqueries para cálculos.
+3. **Usar WHERE para filtrar produtos ativos**.
+4. **Join com NOLOCK**: Só em tabelas de leitura pesada, nunca em transações críticas.
+5. **Valor Total do Pedido**: Use um CTE que agregue por pedido e una por JOIN.
+6. **ClienteFrequente**: Subquery ou CTE para marcar clientes com mais de 3 pedidos.
+
+### **Código Explicado**
+
+```sql
+-- Criação da view vw_PedidosDetalhados
+CREATE OR ALTER VIEW dbo.vw_PedidosDetalhados
+AS
+WITH PedidosRecentes AS (
+    SELECT
+        p.PedidoId,
+        p.ClienteId,
+        p.DataPedido,
+        p.Status
+    FROM
+        dbo.Pedidos p WITH (NOLOCK)
+    WHERE
+        p.Status = 'Finalizado'
+        AND p.DataPedido >= DATEADD(DAY, -90, GETDATE())
+),
+TotalPedido AS (
+    SELECT
+        ip.PedidoId,
+        SUM(ip.Quantidade * ip.PrecoUnitario) AS ValorTotalPedido
+    FROM
+        dbo.ItensPedido ip WITH (NOLOCK)
+        INNER JOIN dbo.Produtos pr WITH (NOLOCK) ON ip.ProdutoId = pr.ProdutoId
+    WHERE
+        pr.Ativo = 1
+    GROUP BY
+        ip.PedidoId
+),
+ClienteFrequente AS (
+    SELECT
+        c.ClienteId,
+        CASE WHEN COUNT(p.PedidoId) > 3 THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS ClienteFrequente
+    FROM
+        dbo.Clientes c WITH (NOLOCK)
+        LEFT JOIN dbo.Pedidos p WITH (NOLOCK) ON c.ClienteId = p.ClienteId
+    GROUP BY
+        c.ClienteId
+)
+SELECT
+    pr.PedidoId,
+    pr.DataPedido,
+    pr.Status,
+    c.Nome AS NomeCliente,
+    c.Email AS EmailCliente,
+    prod.Nome AS NomeProduto,
+    ip.Quantidade,
+    ip.PrecoUnitario,
+    ip.Quantidade * ip.PrecoUnitario AS ValorTotalItem,
+    tp.ValorTotalPedido,
+    cf.ClienteFrequente
+FROM
+    PedidosRecentes pr
+    INNER JOIN dbo.Clientes c WITH (NOLOCK) ON pr.ClienteId = c.ClienteId
+    INNER JOIN dbo.ItensPedido ip WITH (NOLOCK) ON pr.PedidoId = ip.PedidoId
+    INNER JOIN dbo.Produtos prod WITH (NOLOCK) ON ip.ProdutoId = prod.ProdutoId AND prod.Ativo = 1
+    INNER JOIN TotalPedido tp ON pr.PedidoId = tp.PedidoId
+    INNER JOIN ClienteFrequente cf ON pr.ClienteId = cf.ClienteId
+```
+
+### **Boas Práticas Aplicadas**
+- Filtros de datas e status logo no início.
+- Cálculo de totais em CTEs, evitando cálculos linha a linha.
+- CTE para marcação de clientes frequentes, evitando função escalar.
+- Uso de `WITH (NOLOCK)` apenas em tabelas de leitura, nunca em transações críticas.
+- Apenas produtos ativos no resultado final.
+
+---
+
+## **Parte 2: Stored Procedure Estruturada – `sp_RelatorioVendasProduto`**
+
+### **Raciocínio Técnico**
+
+- **Parâmetros de entrada:** Produto, intervalo de datas.
+- **Saída:** Total vendido, quantidade, clientes distintos.
+- **Tratamento de erros com TRY…CATCH**.
+- **Parâmetro de saída para mensagem de erro**.
+- **CTEs/Subqueries para modularizar e facilitar manutenção**.
+- **Comentários para clareza**.
+
+### **Código Explicado**
+
+```sql
+CREATE OR ALTER PROCEDURE dbo.sp_RelatorioVendasProduto
+    @ProdutoId INT,
+    @DataInicio DATE,
+    @DataFim DATE,
+    @ErroMensagem NVARCHAR(200) OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    BEGIN TRY
+        -- Inicializa mensagem de erro
+        SET @ErroMensagem = NULL;
+
+        -- CTE para consolidar vendas do produto no período
+        WITH VendasProdutoPeriodo AS (
+            SELECT
+                ip.PedidoId,
+                p.ClienteId,
+                ip.Quantidade,
+                ip.PrecoUnitario
+            FROM
+                dbo.ItensPedido ip WITH (NOLOCK)
+                INNER JOIN dbo.Pedidos p WITH (NOLOCK) ON ip.PedidoId = p.PedidoId
+            WHERE
+                ip.ProdutoId = @ProdutoId
+                AND p.DataPedido >= @DataInicio
+                AND p.DataPedido <= @DataFim
+                AND p.Status = 'Finalizado'
+        )
+        SELECT
+            SUM(Quantidade * PrecoUnitario) AS TotalVendas,
+            SUM(Quantidade) AS QuantidadeTotalVendida,
+            COUNT(DISTINCT ClienteId) AS NumeroClientesDistintos
+        FROM
+            VendasProdutoPeriodo;
+    END TRY
+    BEGIN CATCH
+        -- Em caso de erro, retorna mensagem amigável
+        SET @ErroMensagem = 'Erro ao gerar relatório: ' + ERROR_MESSAGE();
+    END CATCH
+END
+GO
+```
+
+### **Boas Práticas Aplicadas**
+- Comentários de bloco e linha.
+- Modularização com CTE.
+- Parâmetro de saída para erro.
+- Uso de `WITH (NOLOCK)` em joins somente para leitura.
+- Nomes claros para objetos e parâmetros.
+- Proteção contra SQL Injection (parâmetros fortemente tipados).
+
+---
+
+## **Parte 3: Interpretação de Plano de Execução**
+
+### **Como analisar**
+1. **Execute a view e a procedure** com `SET STATISTICS IO ON` e ative o plano de execução no SSMS.
+2. **Observe:**
+   - Se aparecem Table/Index Scans quando deveria ser Index Seek (pode faltar índice).
+   - Se há operadores caros como Hash Match ou Sort.
+   - Se o número de leituras lógicas está alto.
+3. **Exemplo de gargalos comuns:**
+   - **Falta de índices**: se o filtro de data ou status não está usando índice, pode gerar Table Scan.
+   - **Joins ineficientes**: junções em colunas não indexadas, ou em tabelas grandes, resultando em Hash Joins caros.
+
+### **Dica**
+- Para melhorar: crie índices nas colunas mais filtradas (ex: `Pedidos.Status`, `Pedidos.DataPedido`, `ItensPedido.ProdutoId`).
+- Cuidado com uso excessivo de `NOLOCK` (pode gerar leituras sujas).
+
+---
+
+## **Parte 4: Pratique Joins e Subconsultas**
+
+### **1. Clientes que nunca fizeram pedidos (`NOT EXISTS`):**
+```sql
+SELECT c.ClienteId, c.Nome, c.Email
+FROM dbo.Clientes c
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM dbo.Pedidos p
+    WHERE p.ClienteId = c.ClienteId
+);
+```
+
+### **2. Produtos que nunca foram vendidos (`LEFT JOIN`):**
+```sql
+SELECT pr.ProdutoId, pr.Nome, pr.Preco
+FROM dbo.Produtos pr
+LEFT JOIN dbo.ItensPedido ip ON pr.ProdutoId = ip.ProdutoId
+WHERE ip.ItemPedidoId IS NULL;
+```
+
+### **3. Clientes com mais de 1 pedido nos últimos 30 dias (`EXISTS`):**
+```sql
+SELECT c.ClienteId, c.Nome, c.Email
+FROM dbo.Clientes c
+WHERE EXISTS (
+    SELECT 1
+    FROM dbo.Pedidos p
+    WHERE p.ClienteId = c.ClienteId
+      AND p.DataPedido >= DATEADD(DAY, -30, GETDATE())
+    GROUP BY p.ClienteId
+    HAVING COUNT(*) > 1
+);
+```
+
+---
+
+## **Dicas de Carreira e Boas Práticas**
+
+- **Versionamento:** Use scripts SQL versionados com controle de mudanças (ex: Git).
+- **Naming Convention:** Use prefixos padrão (sp_, vw_, idx_), nomes claros e consistentes.
+- **Índices:** Crie índices nas colunas de junção e filtro frequentes (ex: `Pedidos.ClienteId`, `Pedidos.Status`, `ItensPedido.ProdutoId`).
+- **Documentação:** Sempre comente suas views e procedures.
+- **Evolução:** Estude sempre! Leia planos de execução, crie ambientes de testes, aprenda sobre indexação e análise de queries.
+
+---
+
+## **Resumo**
+
+Você viu como criar:
+- Views performáticas com CTEs e filtragem eficiente;
+- Stored procedures robustas, seguras e bem documentadas;
+- Consultas eficientes com EXISTS, LEFT JOIN e NOT EXISTS;
+- Como analisar o plano de execução e evitar armadilhas de performance.
+
+Se tiver dúvidas ou quiser avançar para temas como índices avançados e particionamento, só perguntar!
